@@ -7,6 +7,7 @@ from .views import (
     LessonUpdateAPIView,
     LessonDestroyAPIView
 )
+app_name = 'lms'
 
 router = DefaultRouter()
 router.register(r'courses', CourseViewSet)

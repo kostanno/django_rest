@@ -5,11 +5,15 @@ from .views import (
     LessonListCreateAPIView,
     LessonRetrieveAPIView,
     LessonUpdateAPIView,
-    LessonDestroyAPIView
+    LessonDestroyAPIView,
+    SubscriptionViewSet
 )
 
+app_name = 'lms'
+
 router = DefaultRouter()
-router.register(r'courses', CourseViewSet)
+router.register(r'courses', CourseViewSet, basename='course')
+router.register(r'subscriptions', SubscriptionViewSet, basename='subscription')
 
 urlpatterns = [
     path('', include(router.urls)),

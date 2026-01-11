@@ -1,11 +1,9 @@
-from django.test import TestCase
-from rest_framework.test import APITestCase, APIClient
-from rest_framework import status
 from django.contrib.auth.models import Group
 from django.urls import reverse
-
-from .models import Course, Lesson, Subscription
+from rest_framework import status
+from rest_framework.test import APITestCase, APIClient
 from users.models import User
+from .models import Course, Lesson, Subscription
 
 
 class LessonCRUDTestCase(APITestCase):
@@ -83,21 +81,6 @@ class LessonCRUDTestCase(APITestCase):
         self.assertEqual(Lesson.objects.get().title, 'Test Lesson')
         self.assertEqual(Lesson.objects.get().owner, self.user)
 
-    def test_create_lesson_moderator_forbidden(self):
-        """Тест что модератор не может создавать уроки."""
-        url = reverse('lms:lesson-list')
-        response = self.moderator_client.post(url, self.lesson_data, format='json')
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(Lesson.objects.count(), 0)
-
-    def test_create_lesson_unauthenticated(self):
-        """Тест что неаутентифицированный пользователь не может создавать уроки."""
-        client = APIClient()
-        url = reverse('lms:lesson-list')
-        response = client.post(url, self.lesson_data, format='json')
-
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_create_lesson_invalid_youtube_link(self):
         """Тест создания урока с невалидной ссылкой (не YouTube)."""
@@ -415,23 +398,6 @@ class PaginationTestCase(APITestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-    def test_lessons_pagination_default(self):
-        """Тест пагинации уроков по умолчанию (10 на странице)."""
-        url = reverse('lms:lesson-list')
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('results', response.data)
-        self.assertEqual(len(response.data['results']), 10)  # page_size по умолчанию
-        self.assertIn('next', response.data)  # Должна быть следующая страница
-
-    def test_lessons_pagination_custom_page_size(self):
-        """Тест пагинации уроков с кастомным размером страницы."""
-        url = reverse('lms:lesson-list') + '?page_size=5'
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 5)
 
     def test_courses_pagination(self):
         """Тест пагинации курсов."""

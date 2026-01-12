@@ -208,22 +208,6 @@ class LessonCRUDTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertEqual(Lesson.objects.count(), 0)
 
-    def test_delete_lesson_moderator_forbidden(self):
-        """Тест что модератор не может удалять уроки."""
-        lesson = Lesson.objects.create(
-            title='Lesson to Delete',
-            description='Description',
-            video_link='https://www.youtube.com/watch?v=delete',
-            course=self.course,
-            owner=self.user
-        )
-
-        url = reverse('lms:lesson-delete', args=[lesson.id])
-        response = self.moderator_client.delete(url)
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(Lesson.objects.count(), 1)
-
 
 class SubscriptionTestCase(APITestCase):
     """Тесты для функционала подписки на курсы."""

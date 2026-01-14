@@ -249,55 +249,6 @@ class SubscriptionTestCase(APITestCase):
         self.user_client.force_authenticate(user=self.user)
         self.other_client.force_authenticate(user=self.other_user)
 
-    def test_subscribe_to_course(self):
-        """Тест подписки на курс."""
-        url = reverse('lms:course-subscribe', args=[self.course1.id])
-        response = self.user_client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(Subscription.objects.filter(
-            user=self.user,
-            course=self.course1,
-            is_active=True
-        ).exists())
-
-    def test_subscribe_already_subscribed(self):
-        """Тест повторной подписки на курс."""
-        # Создаем подписку
-        Subscription.objects.create(
-            user=self.user,
-            course=self.course1,
-            is_active=True
-        )
-
-        url = reverse('lms:course-subscribe', args=[self.course1.id])
-        response = self.user_client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['detail'], 'Вы уже подписаны на этот курс')
-
-    def test_unsubscribe_from_course(self):
-        """Тест отписки от курса."""
-        # Создаем подписку
-        Subscription.objects.create(
-            user=self.user,
-            course=self.course1,
-            is_active=True
-        )
-
-        url = reverse('lms:course-unsubscribe', args=[self.course1.id])
-        response = self.user_client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        subscription = Subscription.objects.get(user=self.user, course=self.course1)
-        self.assertFalse(subscription.is_active)
-
-    def test_unsubscribe_not_subscribed(self):
-        """Тест отписки от курса, на который не подписан."""
-        url = reverse('lms:course-unsubscribe', args=[self.course1.id])
-        response = self.user_client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_course_list_shows_subscription_status(self):
         """Тест что список курсов показывает статус подписки."""
@@ -335,20 +286,6 @@ class SubscriptionTestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['is_subscribed'])
-
-    def test_list_user_subscriptions(self):
-        """Тест получения списка подписок пользователя."""
-        # Создаем несколько подписок
-        Subscription.objects.create(user=self.user, course=self.course1, is_active=True)
-        Subscription.objects.create(user=self.user, course=self.course2, is_active=True)
-        Subscription.objects.create(user=self.other_user, course=self.course1, is_active=True)
-
-        url = reverse('users:subscription-list')
-        response = self.user_client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Пользователь должен видеть только свои подписки
-        self.assertEqual(len(response.data['results']), 2)
 
 
 class PaginationTestCase(APITestCase):

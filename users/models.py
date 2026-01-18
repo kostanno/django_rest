@@ -24,14 +24,30 @@ class User(AbstractUser):
 
 
 class Payment(models.Model):
-    """Модель платежей."""
+    """Модель платежей с поддержкой Stripe."""
 
+    # Способы оплаты
     CASH = 'cash'
     TRANSFER = 'transfer'
+    STRIPE = 'stripe'
 
     PAYMENT_METHOD_CHOICES = [
         (CASH, 'Наличные'),
         (TRANSFER, 'Перевод на счет'),
+        (STRIPE, 'Stripe'),
+    ]
+
+    # Статусы платежей
+    PENDING = 'pending'
+    PAID = 'paid'
+    FAILED = 'failed'
+    REFUNDED = 'refunded'
+
+    STATUS_CHOICES = [
+        (PENDING, 'В ожидании'),
+        (PAID, 'Оплачено'),
+        (FAILED, 'Не удалось'),
+        (REFUNDED, 'Возвращено'),
     ]
 
     user = models.ForeignKey(
@@ -54,6 +70,7 @@ class Payment(models.Model):
         related_name='payments',
         verbose_name='Оплаченный курс'
     )
+
     paid_lesson = models.ForeignKey(
         'lms.Lesson',
         on_delete=models.SET_NULL,
@@ -75,6 +92,41 @@ class Payment(models.Model):
         verbose_name='Способ оплаты'
     )
 
+    # Поля для Stripe
+    stripe_session_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name='Stripe Session ID'
+    )
+
+    stripe_payment_intent_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name='Stripe Payment Intent ID'
+    )
+
+    stripe_payment_link = models.URLField(
+        blank=True,
+        null=True,
+        verbose_name='Ссылка на оплату Stripe'
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=PENDING,
+        verbose_name='Статус платежа'
+    )
+
+    # Метаданные
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name='Метаданные платежа'
+    )
+
     class Meta:
         verbose_name = 'Платеж'
         verbose_name_plural = 'Платежи'
@@ -87,11 +139,3 @@ class Payment(models.Model):
             return f"Платеж {self.amount} от {self.user.email} за урок: {self.paid_lesson.title}"
         else:
             return f"Платеж {self.amount} от {self.user.email}"
-
-    def clean(self):
-        """Проверка, что указан либо курс, либо урок, но не оба одновременно."""
-        from django.core.exceptions import ValidationError
-        if self.paid_course and self.paid_lesson:
-            raise ValidationError('Можно указать только курс или только урок, но не оба одновременно.')
-        if not self.paid_course and not self.paid_lesson:
-            raise ValidationError('Необходимо указать либо курс, либо урок.')

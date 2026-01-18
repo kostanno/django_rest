@@ -6,7 +6,11 @@ from .views import (
     LessonRetrieveAPIView,
     LessonUpdateAPIView,
     LessonDestroyAPIView,
-    SubscriptionViewSet
+    SubscriptionViewSet,
+    CoursePaymentView,
+    CreatePaymentSessionView,
+    CheckPaymentStatusView,
+    StripeWebhookView
 )
 
 app_name = 'lms'
@@ -21,4 +25,8 @@ urlpatterns = [
     path('lessons/<int:pk>/', LessonRetrieveAPIView.as_view(), name='lesson-detail'),
     path('lessons/<int:pk>/update/', LessonUpdateAPIView.as_view(), name='lesson-update'),
     path('lessons/<int:pk>/delete/', LessonDestroyAPIView.as_view(), name='lesson-delete'),
+    path('courses/<int:pk>/payment-info/', CoursePaymentView.as_view(), name='course-payment-info'),
+    path('courses/<int:pk>/create-payment/', CreatePaymentSessionView.as_view(), name='create-payment'),
+    path('check-payment-status/', CheckPaymentStatusView.as_view(), name='check-payment-status'),
+    path('stripe-webhook/', StripeWebhookView.as_view(), name='stripe-webhook'),
 ]

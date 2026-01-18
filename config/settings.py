@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "drf_yasg",
     "users",
     "lms",
 
@@ -99,12 +100,7 @@ EMAIL_HOST_USER = os.getenv('USER_EMAIL'),
 EMAIL_HOST_PASSWORD = os.getenv('PASSWORD_EMAIL'),
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
-# CACHES = {
-#     'default': {
-#         'BACKEND': os.getenv('BACKEND'),
-#         'LOCATION': os.getenv('LOCATION'),
-#     }
-# }
+
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
@@ -160,3 +156,37 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'JWT токен в формате: Bearer <ваш_токен>'
+        }
+    },
+    'USE_SESSION_AUTH': False,
+    'JSON_EDITOR': True,
+    'DEFAULT_INFO': 'config.urls.swagger_info',
+    'OPERATIONS_SORTER': 'alpha',
+    'TAGS_SORTER': 'alpha',
+    'DOC_EXPANSION': 'list',
+    'SHOW_REQUEST_HEADERS': True,
+}
+
+REDOC_SETTINGS = {
+    'LAZY_RENDERING': False,
+    'NATIVE_SCROLLBARS': False,
+    'REQUIRED_PROPS_FIRST': True,
+    'SORT_OPERATIONS_BY': 'method',
+}
+
+FRONTEND_URL = 'http://localhost:3000'
+PAYMENT_SUCCESS_URL = f'{FRONTEND_URL}/payment/success/?session_id={{CHECKOUT_SESSION_ID}}'
+PAYMENT_CANCEL_URL = f'{FRONTEND_URL}/payment/cancel/'
+DEFAULT_CURRENCY = 'usd'
+
+STRIPE_API_KEY = os.getenv('API'),
+STRIPE_PUBLIC_KEY = os.getenv('PUBLIC'),
+STRIPE_WEBHOOK_SECRET = os.getenv('WEBHOOK'),

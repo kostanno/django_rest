@@ -5,9 +5,77 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import User, Payment
 from .serializers import UserSerializer, PaymentSerializer
 from .permissions import IsModerator, IsOwner
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """Кастомный view для получения JWT токенов."""
+
+    @swagger_auto_schema(
+        operation_summary="Аутентификация пользователя",
+        operation_description="Получение JWT токенов по email и паролю",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['email', 'password'],
+            properties={
+                'email': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='email',
+                    description='Email пользователя'
+                ),
+                'password': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='password',
+                    description='Пароль пользователя'
+                ),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Успешная аутентификация",
+                examples={
+                    'application/json': {
+                        'refresh': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...',
+                        'access': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...'
+                    }
+                }
+            ),
+            401: "Неверные учетные данные",
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
+
+class RegisterView(generics.CreateAPIView):
+    """View для регистрации пользователей."""
+
+    @swagger_auto_schema(
+        operation_summary="Регистрация нового пользователя",
+        operation_description="Создание нового аккаунта пользователя",
+        request_body=UserRegisterSerializer,
+        responses={
+            201: openapi.Response(
+                description="Успешная регистрация",
+                examples={
+                    'application/json': {
+                        'id': 1,
+                        'email': 'user@example.com',
+                        'first_name': 'Иван',
+                        'last_name': 'Иванов'
+                    }
+                }
+            ),
+            400: "Ошибка валидации",
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
 
 class UserViewSet(viewsets.ModelViewSet):

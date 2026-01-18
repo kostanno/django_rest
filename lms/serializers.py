@@ -79,3 +79,68 @@ class CourseSerializer(serializers.ModelSerializer):
                 is_active=True
             ).exists()
         return False
+
+
+class CoursePaymentSerializer(serializers.ModelSerializer):
+    """Сериализатор для оплаты курса."""
+
+    stripe_public_key = serializers.SerializerMethodField()
+    test_cards = serializers.SerializerMethodField()
+    is_purchased = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Course
+        fields = [
+            'id', 'title', 'description', 'price',
+            'stripe_product_id', 'stripe_price_id',
+            'stripe_public_key', 'test_cards', 'is_purchased'
+        ]
+        read_only_fields = ['stripe_product_id', 'stripe_price_id']
+
+    def get_stripe_public_key(self, obj):
+        from django.conf import settings
+        return settings.STRIPE_PUBLIC_KEY
+
+    def get_test_cards(self, obj):
+        """Возвращает тестовые карты для Stripe."""
+        return StripeService.get_test_cards()
+
+    def get_is_purchased(self, obj):
+        """Проверяет, купил ли текущий пользователь курс."""
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            from users.models import Payment
+            return Payment.objects.filter(
+                user=request.user,
+                paid_course=obj,
+                status='paid'
+            ).exists()
+        return False
+
+
+class StripeCheckoutSerializer(serializers.Serializer):
+    """Сериализатор для создания сессии оплаты в Stripe."""
+
+    success_url = serializers.URLField(
+        required=False,
+        help_text='URL для перенаправления после успешной оплаты'
+    )
+    cancel_url = serializers.URLField(
+        required=False,
+        help_text='URL для перенаправления при отмене оплаты'
+    )
+
+    class Meta:
+        fields = ['success_url', 'cancel_url']
+
+
+class PaymentStatusSerializer(serializers.Serializer):
+    """Сериализатор для проверки статуса оплаты."""
+
+    session_id = serializers.CharField(
+        max_length=255,
+        help_text='ID сессии Stripe'
+    )
+
+    class Meta:
+        fields = ['session_id']

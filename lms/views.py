@@ -10,22 +10,33 @@ from .paginators import LessonPagination, CoursePagination
 
 class CourseViewSet(viewsets.ModelViewSet):
     """ViewSet для CRUD операций с курсами."""
+
     queryset = Course.objects.all()
     serializer_class = CourseSerializer
     pagination_class = CoursePagination
 
     def get_permissions(self):
+
         if self.action == 'list' or self.action == 'retrieve':
             return [IsAuthenticated()]
-
+        elif self.action == 'create':
+            return [IsAuthenticated(), IsNotModerator()]
+        elif self.action in ['update', 'partial_update']:
+            return [IsAuthenticated(), IsOwnerOrModerator]
+        elif self.action == 'destroy':
+            return [IsAuthenticated(), IsOwnerAndNotModerator]
+        else:
+            return [permission() for permission in self.permission_classes]
 
     def get_queryset(self):
+        """Возвращаем queryset в зависимости от прав пользователя."""
         user = self.request.user
         if user.is_superuser or IsModerator().has_permission(self.request, self):
             return Course.objects.all()
         return Course.objects.filter(owner=user)
 
     def perform_create(self, serializer):
+        """При создании курса автоматически устанавливаем владельца."""
         serializer.save(owner=self.request.user)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
@@ -33,8 +44,6 @@ class CourseViewSet(viewsets.ModelViewSet):
         """Подписаться на обновления курса."""
         course = self.get_object()
         user = request.user
-
-        # Проверяем, есть ли уже подписка
         subscription, created = Subscription.objects.get_or_create(
             user=user,
             course=course,
@@ -67,8 +76,10 @@ class CourseViewSet(viewsets.ModelViewSet):
 
 class SubscriptionViewSet(viewsets.ModelViewSet):
     """ViewSet для управления подписками."""
+
     serializer_class = SubscriptionSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         """Пользователь видит только свои подписки."""
@@ -76,7 +87,6 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
-
 
 class LessonListCreateAPIView(generics.ListCreateAPIView):
     """Generic-класс для получения списка уроков и создания нового."""

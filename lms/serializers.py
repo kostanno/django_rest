@@ -62,13 +62,15 @@ class CourseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
         fields = ['id', 'title', 'preview', 'description', 'lessons_count', 'lessons', 'is_subscribed', 'owner']
-        extra_kwargs = {'owner': {'read_only': True},}
-
+        extra_kwargs = {
+            'owner': {'read_only': True},
+        }
 
     def get_lessons_count(self, obj):
         return obj.lessons.count()
 
     def get_is_subscribed(self, obj):
+        """Проверяет, подписан ли текущий пользователь на курс."""
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return Subscription.objects.filter(
@@ -77,11 +79,3 @@ class CourseSerializer(serializers.ModelSerializer):
                 is_active=True
             ).exists()
         return False
-
-    def validate(self, attrs):
-        """Пример валидации курса."""
-        if attrs.get('is_paid', False) and not attrs.get('description'):
-            raise serializers.ValidationError({
-                'description': 'Платный курс должен иметь описание'
-            })
-        return attrs

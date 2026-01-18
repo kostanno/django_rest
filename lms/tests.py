@@ -288,6 +288,120 @@ class SubscriptionTestCase(APITestCase):
         self.assertTrue(response.data['is_subscribed'])
 
 
+class SubscriptionTestCase(APITestCase):
+    """Тесты для функционала подписки на курсы."""
+
+    def setUp(self):
+        """Настройка тестовых данных."""
+        self.user = User.objects.create(
+            email='testuser@example.com',
+            first_name='Test',
+            last_name='User'
+        )
+        self.user.set_password('testpassword123')
+        self.user.save()
+
+        self.other_user = User.objects.create(
+            email='otheruser@example.com',
+            first_name='Other',
+            last_name='User'
+        )
+        self.other_user.set_password('otherpassword123')
+        self.other_user.save()
+
+        # Создаем курсы
+        self.course1 = Course.objects.create(
+            title='Course 1',
+            description='Description 1',
+            owner=self.user
+        )
+        self.course2 = Course.objects.create(
+            title='Course 2',
+            description='Description 2',
+            owner=self.other_user
+        )
+
+        # Создаем клиенты
+        self.user_client = APIClient()
+        self.other_client = APIClient()
+
+        self.user_client.force_authenticate(user=self.user)
+        self.other_client.force_authenticate(user=self.other_user)
+
+    def test_subscribe_to_course(self):
+        """Тест подписки на курс."""
+        url = reverse('lms:course-subscribe', args=[self.course1.id])
+        response = self.user_client.post(url)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Subscription.objects.filter(
+            user=self.user,
+            course=self.course1,
+            is_active=True
+        ).exists())
+
+    def test_list_user_subscriptions(self):
+        """Тест получения списка подписок пользователя."""
+        # Создаем несколько подписок
+        Subscription.objects.create(user=self.user, course=self.course1, is_active=True)
+        Subscription.objects.create(user=self.user, course=self.course2, is_active=True)
+        Subscription.objects.create(user=self.other_user, course=self.course1, is_active=True)
+
+        # Получаем список подписок текущего пользователя
+        url = reverse('lms:subscription-list')
+        response = self.user_client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Пользователь должен видеть только свои подписки
+        # response.data должен быть списком (пагинация отключена)
+        self.assertEqual(len(response.data), 2)
+
+        # Проверяем, что в списке только подписки текущего пользователя
+        subscription_course_ids = [sub['course'] for sub in response.data]
+        self.assertIn(self.course1.id, subscription_course_ids)
+        self.assertIn(self.course2.id, subscription_course_ids)
+
+    def test_unsubscribe_from_course(self):
+        """Тест отписки от курса."""
+        # Создаем подписку
+        subscription = Subscription.objects.create(
+            user=self.user,
+            course=self.course1,
+            is_active=True
+        )
+
+        url = reverse('lms:course-unsubscribe', args=[self.course1.id])
+        response = self.user_client.post(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        subscription.refresh_from_db()
+        self.assertFalse(subscription.is_active)
+
+    def test_course_list_shows_subscription_status(self):
+        """Тест что список курсов показывает статус подписки."""
+        # Пользователь подписан на course1
+        Subscription.objects.create(
+            user=self.user,
+            course=self.course1,
+            is_active=True
+        )
+
+        url = reverse('lms:course-list')
+        response = self.user_client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Проверяем, что в списке курсов есть поле is_subscribed
+        # response.data будет словарем с пагинацией
+        self.assertIn('results', response.data)
+
+        for course_data in response.data['results']:
+            if course_data['id'] == self.course1.id:
+                self.assertTrue(course_data['is_subscribed'])
+                break
+        else:
+            self.fail("Course 1 not found in response")
+
 class PaginationTestCase(APITestCase):
     """Тесты пагинации."""
 

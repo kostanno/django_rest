@@ -1,0 +1,27 @@
+[project]
+name = "django_rest"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Kostya Igonin",email = "Igoninqw@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "django (>=5.2.8,<6.0.0)",
+    "psycopg2 (>=2.9.11,<3.0.0)",
+    "black (>=25.11.0,<26.0.0)",
+    "pillow (>=12.0.0,<13.0.0)",
+    "ipython (>=9.7.0,<10.0.0)",
+    "python-dotenv (>=1.2.1,<2.0.0)",
+    "redis (>=7.1.0,<8.0.0)",
+    "djangorestframework (>=3.16.1,<4.0.0)",
+    "django-filter (>=25.2,<26.0)",
+    "drf-yasg (>=1.21.14,<2.0.0)",
+    "stripe (>=14.2.0,<15.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

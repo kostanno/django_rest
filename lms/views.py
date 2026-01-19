@@ -20,127 +20,159 @@ from .serializers import (
     StripeCheckoutSerializer,
     PaymentStatusSerializer
 )
-from lms.services import StripeService
+from lms.services import StripeService, logger
 from users.models import Payment
 
 
 class CourseViewSet(viewsets.ModelViewSet):
     """ViewSet для CRUD операций с курсами."""
 
-    @swagger_auto_schema(
-        operation_summary="Получить список курсов",
-        operation_description="Возвращает список курсов с пагинацией",
-        manual_parameters=[
-            openapi.Parameter('page', openapi.IN_QUERY, description="Номер страницы", type=openapi.TYPE_INTEGER),
-            openapi.Parameter('page_size', openapi.IN_QUERY, description="Размер страницы", type=openapi.TYPE_INTEGER),
-        ],
-        responses={
-            200: CourseSerializer(many=True),
-            401: "Не авторизован",
-        }
-    )
-    def list(self, request, *args, **kwargs):
-        return super().list(request, *args, **kwargs)
+    queryset = Course.objects.all()
+    serializer_class = CourseSerializer
 
-    @swagger_auto_schema(
-        operation_summary="Создать курс",
-        operation_description="Создание нового курса. Доступно только для авторизованных пользователей, не являющихся модераторами.",
-        request_body=CourseSerializer,
-        responses={
-            201: CourseSerializer,
-            400: "Ошибка валидации",
-            401: "Не авторизован",
-            403: "Нет прав для создания курса",
-        }
-    )
-    def create(self, request, *args, **kwargs):
-        return super().create(request, *args, **kwargs)
+    def get_permissions(self):
+        """Настройка прав доступа."""
+        if self.action == 'list' or self.action == 'retrieve':
+            return [IsAuthenticated()]
+        elif self.action == 'create':
+            return [IsAuthenticated(), IsNotModerator()]
+        elif self.action in ['update', 'partial_update']:
+            return [IsAuthenticated(), IsOwnerOrModerator]
+        elif self.action == 'destroy':
+            return [IsAuthenticated(), IsOwnerAndNotModerator]
+        else:
+            return [IsAuthenticated()]
 
-    @swagger_auto_schema(
-        method='post',
-        operation_summary="Подписаться на курс",
-        operation_description="""
-        Подписка на обновления курса.
+    def get_queryset(self):
+        """Возвращаем queryset в зависимости от прав пользователя."""
+        user = self.request.user
 
-        Пользователь будет получать уведомления о новых уроках в этом курсе.
-        Одна подписка на курс для пользователя.
-        """,
-        responses={
-            201: openapi.Response(
-                description="Подписка создана",
-                examples={
-                    'application/json': {
-                        'detail': 'Вы подписались на курс'
-                    }
-                }
-            ),
-            200: openapi.Response(
-                description="Подписка уже существует",
-                examples={
-                    'application/json': {
-                        'detail': 'Вы уже подписаны на этот курс'
-                    }
-                }
-            ),
-            400: "Неверный ID курса",
-            401: "Не авторизован",
-        }
-    )
+        if user.is_superuser or IsModerator().has_permission(self.request, self):
+            return Course.objects.all()
+
+        return Course.objects.filter(owner=user)
+
+    def perform_create(self, serializer):
+        """При создании курса автоматически устанавливаем владельца."""
+        serializer.save(owner=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        """Переопределяем update для отправки уведомлений об обновлении курса."""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        # Сохраняем старые данные для сравнения
+        old_title = instance.title
+
+        # Выполняем обновление
+        self.perform_update(serializer)
+
+        # Проверяем, изменилось ли название курса
+        if instance.title != old_title:
+            # Если название изменилось, отправляем уведомление
+            self._send_course_update_notification(instance, "обновлено описание курса")
+
+        # Проверяем, добавлены ли новые уроки
+        if 'lessons' in request.data:
+            self._check_new_lessons(instance, request.data.get('lessons', []))
+
+        return Response(serializer.data)
+
+    def perform_update(self, serializer):
+        """Сохранение обновленных данных."""
+        serializer.save()
+
+    def _send_course_update_notification(self, course, update_message, send_course_update_email=None):
+        """
+        Отправляет уведомление об обновлении курса подписчикам.
+
+        Args:
+            course (Course): Обновленный курс
+            update_message (str): Сообщение об обновлении
+        """
+        try:
+            # Получаем количество активных подписчиков
+            subscribers_count = Subscription.objects.filter(
+                course=course,
+                is_active=True
+            ).count()
+
+            if subscribers_count > 0:
+                send_course_update_email.delay(
+                    course_id=course.id,
+                    update_message=update_message
+                )
+
+                logger.info(f"Course update notification scheduled for {subscribers_count} subscribers")
+        except Exception as e:
+            logger.error(f"Error scheduling course update notification: {str(e)}")
+
+    def _check_new_lessons(self, course, lessons_data, send_course_update_email=None):
+        """
+        Проверяет добавление новых уроков.
+
+        Args:
+            course (Course): Курс
+            lessons_data (list): Данные уроков из запроса
+        """
+        try:
+            # Получаем существующие уроки
+            existing_lessons = set(course.lessons.values_list('title', flat=True))
+
+            # Находим новые уроки
+            new_lessons = []
+            for lesson_data in lessons_data:
+                if isinstance(lesson_data, dict) and 'title' in lesson_data:
+                    if lesson_data['title'] not in existing_lessons:
+                        new_lessons.append(lesson_data['title'])
+
+            # Отправляем уведомления для каждого нового урока
+            for lesson_title in new_lessons:
+                send_course_update_email.delay(
+                    course_id=course.id,
+                    lesson_title=lesson_title
+                )
+
+                logger.info(f"New lesson notification scheduled: {lesson_title}")
+
+        except Exception as e:
+            logger.error(f"Error checking new lessons: {str(e)}")
+
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
-
     def subscribe(self, request, pk=None):
         """Подписаться на обновления курса."""
         course = self.get_object()
         user = request.user
-        subscription, created = Subscription.objects.get_or_create(
-            user=user,
-            course=course,
-            defaults={'is_active': True}
-        )
-
-        if not created and not subscription.is_active:
-            subscription.is_active = True
-            subscription.save()
-            return Response({'detail': 'Подписка возобновлена'}, status=status.HTTP_200_OK)
-        elif created:
-            return Response({'detail': 'Вы подписались на курс'}, status=status.HTTP_201_CREATED)
-        else:
-            return Response({'detail': 'Вы уже подписаны на этот курс'}, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
-    @swagger_auto_schema(
-        method='post',
-        operation_summary="Отписаться от курса",
-        operation_description="Отмена подписки на обновления курса.",
-        responses={
-            200: openapi.Response(
-                description="Успешная отписка",
-                examples={
-                    'application/json': {
-                        'detail': 'Вы отписались от курса'
-                    }
-                }
-            ),
-            400: "Вы не подписаны на этот курс",
-            401: "Не авторизован",
-        }
-    )
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
-
-    def unsubscribe(self, request, pk=None):
-        """Отписаться от обновлений курса."""
-        course = self.get_object()
-        user = request.user
 
         try:
-            subscription = Subscription.objects.get(user=user, course=course)
-            subscription.is_active = False
-            subscription.save()
-            return Response({'detail': 'Вы отписались от курса'}, status=status.HTTP_200_OK)
-        except Subscription.DoesNotExist:
-            return Response({'detail': 'Вы не подписаны на этот курс'}, status=status.HTTP_400_BAD_REQUEST)
+            subscription, created = Subscription.objects.get_or_create(
+                user=user,
+                course=course,
+                defaults={'is_active': True}
+            )
 
+            if not created and not subscription.is_active:
+                subscription.is_active = True
+                subscription.save()
+                message = 'Подписка возобновлена'
+                status_code = status.HTTP_200_OK
+            elif created:
+                message = 'Вы подписались на курс'
+                status_code = status.HTTP_201_CREATED
+            else:
+                message = 'Вы уже подписаны на этот курс'
+                status_code = status.HTTP_200_OK
 
+            return Response({'detail': message}, status=status_code)
+
+        except Exception as e:
+            logger.error(f"Error in subscribe action: {str(e)}")
+            return Response(
+                {'detail': 'Ошибка при подписке на курс'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 class SubscriptionViewSet(viewsets.ModelViewSet):
     """ViewSet для управления подписками."""
 
@@ -542,3 +574,53 @@ class StripeWebhookView(APIView):
                 print(f"Payment {payment.id} expired via webhook")
 
         return HttpResponse(status=200)
+
+
+class LessonViewSet(viewsets.ModelViewSet):
+    """ViewSet для управления уроками."""
+
+    queryset = Lesson.objects.all()
+    serializer_class = LessonSerializer
+
+    def get_permissions(self):
+        """Настройка прав доступа для уроков."""
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+        elif self.action == 'create':
+            return [IsAuthenticated(), IsNotModerator()]
+        elif self.action in ['update', 'partial_update']:
+            return [IsAuthenticated(), IsOwnerOrModerator]
+        elif self.action == 'destroy':
+            return [IsAuthenticated(), IsOwnerAndNotModerator]
+        else:
+            return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        """При создании урока отправляем уведомления подписчикам."""
+        lesson = serializer.save(owner=self.request.user)
+        self._send_new_lesson_notification(lesson)
+
+    def perform_update(self, serializer):
+        """При обновлении урока также можно отправлять уведомления."""
+        lesson = serializer.save()
+
+    def _send_new_lesson_notification(self, lesson, send_course_update_email=None):
+
+        try:
+
+            course = lesson.course
+
+            subscribers_count = Subscription.objects.filter(
+                course=course,
+                is_active=True
+            ).count()
+
+            if subscribers_count > 0:
+                send_course_update_email.delay(
+                    course_id=course.id,
+                    lesson_title=lesson.title
+                )
+
+                logger.info(f"New lesson notification scheduled for {subscribers_count} subscribers")
+        except Exception as e:
+            logger.error(f"Error sending new lesson notification: {str(e)}")

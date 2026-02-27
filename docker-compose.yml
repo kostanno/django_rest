@@ -1,0 +1,299 @@
+version: '3.8'
+
+# Имя проекта
+name: lms-platform
+
+services:
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:16-alpine
+    container_name: lms_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lms_db}
+      POSTGRES_USER: ${POSTGRES_USER:-lms_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lms_password}
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+      - ./docker/postgres/backups:/backups
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lms_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - lms_network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis для Celery и кэширования
+  redis:
+    image: redis:7-alpine
+    container_name: lms_redis
+    command: >
+      redis-server 
+      --appendonly yes 
+      --requirepass ${REDIS_PASSWORD:-redis_password}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lms_network
+    restart: unless-stopped
+
+  # Django приложение
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lms_django
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Django settings
+      DJANGO_SETTINGS_MODULE: config.settings
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app
+
+      # Database (дублируем для совместимости)
+      DATABASE_URL: postgres://${POSTGRES_USER:-lms_user}:${POSTGRES_PASSWORD:-lms_password}@postgres:5432/${POSTGRES_DB:-lms_db}
+      DB_HOST: postgres
+      DB_PORT: 5432
+
+      # Redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+      - ./logs:/app/logs
+      - ./docker/django/entrypoint.sh:/entrypoint.sh
+    ports:
+      - "8000:8000"
+    entrypoint: ["/entrypoint.sh"]
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+             gunicorn config.wsgi:application 
+             --bind 0.0.0.0:8000 
+             --workers 3 
+             --threads 2 
+             --timeout 120 
+             --access-logfile - 
+             --error-logfile -"
+    networks:
+      - lms_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Celery Worker
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: lms_celery_worker
+    depends_on:
+      - redis
+      - postgres
+      - django
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      PYTHONUNBUFFERED: 1
+      CELERY_WORKER_CONCURRENCY: 4
+      CELERY_WORKER_MAX_TASKS_PER_CHILD: 1000
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    command: >
+      sh -c "celery -A config worker 
+             --loglevel=info 
+             --concurrency=${CELERY_WORKER_CONCURRENCY:-4} 
+             --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-1000}
+             --queues=default,emails,periodic_tasks 
+             --hostname=worker@%h"
+    networks:
+      - lms_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "-A", "config", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery Beat (планировщик периодических задач)
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: lms_celery_beat
+    depends_on:
+      - redis
+      - postgres
+      - django
+      - celery_worker
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    command: >
+      sh -c "celery -A config beat 
+             --loglevel=info 
+             --scheduler django_celery_beat.schedulers:DatabaseScheduler 
+             --pidfile=/tmp/celerybeat.pid"
+    networks:
+      - lms_network
+    restart: unless-stopped
+
+  # Flower (мониторинг Celery)
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: lms_flower
+    depends_on:
+      - redis
+      - celery_worker
+      - celery_beat
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0
+      FLOWER_PORT: 5555
+    ports:
+      - "5555:5555"
+    command: >
+      sh -c "celery -A config flower 
+             --port=5555 
+             --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-flower_password}
+             --persistent=True 
+             --db=/tmp/flower.db 
+             --max_tasks=10000"
+    networks:
+      - lms_network
+    restart: unless-stopped
+
+  # Nginx (для обслуживания статических файлов и прокси)
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: lms_nginx
+    depends_on:
+      - django
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - static_volume:/app/staticfiles:ro
+      - media_volume:/app/media:ro
+      - ./logs/nginx:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - lms_network
+    restart: unless-stopped
+
+  # pgAdmin (управление базой данных)
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: lms_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-pgadmin_password}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json
+    ports:
+      - "5050:80"
+    networks:
+      - lms_network
+    restart: unless-stopped
+
+  # Redis Commander (управление Redis)
+  redis_commander:
+    image: rediscommander/redis-commander:latest
+    container_name: lms_redis_commander
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:${REDIS_PASSWORD:-redis_password}
+      HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-redis_commander_password}
+      HTTP_ROOT: /
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - lms_network
+    restart: unless-stopped
+
+  # MailHog (тестовый SMTP сервер для разработки)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: lms_mailhog
+    ports:
+      - "1025:1025"  # SMTP порт
+      - "8025:8025"  # Web UI порт
+    networks:
+      - lms_network
+    restart: unless-stopped
+
+  # Portainer (управление контейнерами - опционально)
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: lms_portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - lms_network
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume:
+  media_volume:
+  pgadmin_data:
+  portainer_data:
+
+networks:
+  lms_network:
+    driver: bridge
+    name: lms_network
